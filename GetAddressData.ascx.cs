@@ -14,7 +14,7 @@ using CMS.SettingsProvider;
 using System.Text;
 
 
-
+#region JSON data objects
 
 public class Input
 {
@@ -30,14 +30,46 @@ public class Out
     public int type { get; set; }
 }
 
-public class OutExt
+
+public class Tx
+{
+    public long result { get; set; }
+    public int block_height { get; set; }
+    public int time { get; set; }
+    public List<Input> inputs { get; set; }
+    public long vout_sz { get; set; }
+    public string relayed_by { get; set; }
+    public string hash { get; set; }
+    public long vin_sz { get; set; }
+    public long tx_index { get; set; }
+    public long ver { get; set; }
+    public List<Out> @out { get; set; }
+    public long size { get; set; }
+}
+
+public class BlockChainAddress
+{
+    public string hash160 { get; set; }
+    public string address { get; set; }
+    public long n_tx { get; set; }
+    public long total_received { get; set; }
+    public long total_sent { get; set; }
+    public long final_balance { get; set; }
+    public List<Tx> txs { get; set; }
+}
+
+#endregion
+
+#region Internal objects
+
+public class Transaction
 {
     private DataRow dataRow;
 
-    public OutExt()
+    public Transaction()
     { }
 
-    public OutExt(DataRow dataRow)
+    public Transaction(DataRow dataRow)
     {
         this.dataRow = dataRow;
 
@@ -74,32 +106,7 @@ public class OutExt
 
 public enum TransactionType { IN, OUT };
 
-public class Tx
-{
-    public long result { get; set; }
-    public int block_height { get; set; }
-    public int time { get; set; }
-    public List<Input> inputs { get; set; }
-    public long vout_sz { get; set; }
-    public string relayed_by { get; set; }
-    public string hash { get; set; }
-    public long vin_sz { get; set; }
-    public long tx_index { get; set; }
-    public long ver { get; set; }
-    public List<Out> @out { get; set; }
-    public long size { get; set; }
-}
-
-public class BlockChainAddress
-{
-    public string hash160 { get; set; }
-    public string address { get; set; }
-    public long n_tx { get; set; }
-    public long total_received { get; set; }
-    public long total_sent { get; set; }
-    public long final_balance { get; set; }
-    public List<Tx> txs { get; set; }
-}
+#endregion
 
 
 public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
@@ -168,13 +175,13 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
         {
 
             // Check if database entries for the given address are available and return last transaction if yes
-            OutExt lastTrx = GetLastTransaction(startAddress);
+            Transaction lastTrx = GetLastTransaction(startAddress);
 
             // no transaction found, retrieve all
             if (lastTrx == null)
             {
 
-                List<OutExt> trxAll = new List<OutExt>();
+                List<Transaction> trxAll = new List<Transaction>();
 
                 string url = blockchainURL + "address/" + startAddress + suffixQueryString;
 
@@ -191,13 +198,13 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
                         offset = "&offset=" + n_offset * 50;
                     }
 
-                    string result = GetBlockchainResult(url + offset);
+                    string rawJSON = GetBlockchainResult(url + offset);
 
                     // create object from JSON
-                    BlockChainAddress address = GetAddrfromJSON(result);
+                    BlockChainAddress address = GetAddrfromJSON(rawJSON);
 
-                    // get all transactions for the current address as dataset
-                    List<OutExt> trxOrdered = GetTransactionsList(address, result);
+                    // get all transactions for the current address
+                    List<Transaction> trxOrdered = GetTransactionsList(address, rawJSON);
 
                     trxOrdered.AddRange(trxAll);
                     trxAll = trxOrdered;
@@ -231,19 +238,30 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
         }
     }
 
-    private OutExt GetLastTransaction(string startAddress)
+
+    /// <summary>
+    /// Retrieve last transaction from the database
+    /// </summary>
+    /// <param name="startAddress">Address of transaction</param>
+    /// <returns></returns>
+    private Transaction GetLastTransaction(string address)
     {
-        DataSet ds = ConnectionHelper.ExecuteQuery(string.Format("SELECT TOP 1 * FROM BTC_Transactions WHERE TrxAddress = '{0}' ORDER BY ItemID DESC", startAddress), null, QueryTypeEnum.SQLQuery, true);
+        DataSet ds = ConnectionHelper.ExecuteQuery(string.Format("SELECT TOP 1 * FROM BTC_Transactions WHERE TrxAddress = '{0}' ORDER BY ItemID DESC", address), null, QueryTypeEnum.SQLQuery, true);
 
         if (ds.Tables[0].Rows.Count > 0)
         {
-            return new OutExt(ds.Tables[0].Rows[0]);
+            return new Transaction(ds.Tables[0].Rows[0]);
         }
         else return null;
     }
 
 
-    private void SaveToDB(List<OutExt> trxAll, string address)
+    /// <summary>
+    /// Saving transactions to the database
+    /// </summary>
+    /// <param name="trxAll">List of all transactions in the correct order</param>
+    /// <param name="address">Transactions address</param>
+    private void SaveToDB(List<Transaction> trxAll, string address)
     {
         // Build SQL query
         StringBuilder query = new StringBuilder(@"INSERT INTO BTC_Transactions (
@@ -267,7 +285,7 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
         int index = 0;
 
         // create SQL statement
-        foreach (OutExt trx in trxAll)
+        foreach (Transaction trx in trxAll)
         {
             query.Append("(");
 
@@ -327,7 +345,11 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
     }
 
 
-    private List<OutExt> FixOrder(List<OutExt> trxAll)
+    /// <summary>
+    /// Fixing transactions order
+    /// </summary>
+    /// <param name="trxAll">List of all transactions</param>    
+    private List<Transaction> FixOrder(List<Transaction> trxAll)
     {
         for (int i = 0; i < trxAll.Count; i++)
         {
@@ -345,14 +367,26 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
         return trxAll;
     }
 
-    static void Swap(List<OutExt> list, int indexA, int indexB)
+
+    /// <summary>
+    /// Function for swapping two transactions in the LIst for reordering
+    /// </summary>
+    /// <param name="list">Source list</param>
+    /// <param name="indexA">Index of first item</param>
+    /// <param name="indexB">Index of second item</param>
+    static void Swap(List<Transaction> list, int indexA, int indexB)
     {
-        OutExt tmp = list[indexA];
+        Transaction tmp = list[indexA];
         list[indexA] = list[indexB];
         list[indexB] = tmp;
     }
 
-    private List<OutExt> CalculateBalance(List<OutExt> trxOrdered)
+
+    /// <summary>
+    /// Balance calculation
+    /// </summary>
+    /// <param name="trxOrdered">List of ordered transactions</param>    
+    private List<Transaction> CalculateBalance(List<Transaction> trxOrdered)
     {
 
         trxOrdered[0].balance += trxOrdered[0].value;
@@ -376,12 +410,16 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
     }
 
 
-
-    private List<OutExt> GetTransactionsList(BlockChainAddress address, string rawData)
+    /// <summary>
+    /// Extracts all transactions from the BlockChain JSON response
+    /// </summary>
+    /// <param name="address">The address of the report</param>
+    /// <param name="rawData">Serialized JSON data for invalidly serialized data</param>    
+    private List<Transaction> GetTransactionsList(BlockChainAddress address, string rawData)
     {
         // List of transaction, will be ordered and use as a data source for charts
 
-        List<OutExt> trx = new List<OutExt>();
+        List<Transaction> trx = new List<Transaction>();
         long balance = address.final_balance;
 
         // Get all relevant transactions
@@ -392,8 +430,8 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
             long fee = 0;
 
             // Use the extended out object to add a time stamp
-            OutExt newItemOut = new OutExt();
-            OutExt newItemIn = new OutExt();
+            Transaction newItemOut = new Transaction();
+            Transaction newItemIn = new Transaction();
 
             // Get outgoing transactions
             foreach (Input input in transaction.inputs)
@@ -438,9 +476,19 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
         return trx.OrderBy(o => o.timeOfTrx).ToList();
     }
 
-    private OutExt InitializeTrx(Tx transaction, TransactionType transactionType, string rawData, long value, long balance)
+
+    /// <summary>
+    /// Initializes the transaction with values
+    /// </summary>
+    /// <param name="transaction">JSON transaction deserialized</param>
+    /// <param name="transactionType">IN or OUT transaction</param>
+    /// <param name="rawData">The JSON raw data (serialized) for extracting missing values</param>
+    /// <param name="value">Transaction value/amount</param>
+    /// <param name="balance">The balance of the address after the transaction</param>
+    /// <returns>Initialized extended transaction</returns>
+    private Transaction InitializeTrx(Tx transaction, TransactionType transactionType, string rawData, long value, long balance)
     {
-        OutExt trxEntry = new OutExt();
+        Transaction trxEntry = new Transaction();
 
         trxEntry.timeEpoch = GetEpochTimeFromJSON(transaction.time, rawData, transaction.tx_index);
 
@@ -457,7 +505,13 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
         return trxEntry;
     }
 
-    private string GetJavascript(List<OutExt> transactions)
+
+    /// <summary>
+    /// Generates the JavaScript for the charts
+    /// </summary>
+    /// <param name="transactions">List of transactions to be plotted</param>
+    /// <returns>JavaScript</returns>
+    private string GetJavascript(List<Transaction> transactions)
     {
         string dataOut = "";
         string dataIn = "";
@@ -465,7 +519,7 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
         string dataBallance = "";
 
         // Build in and out lists
-        foreach (OutExt transaction in transactions)
+        foreach (Transaction transaction in transactions)
         {
             long value = transaction.value;
             string newLine = getDataLine(transaction.timeOfTrx, value);
@@ -511,11 +565,16 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
     }
 
 
-    private string GetTable(List<OutExt> transactions)
+    /// <summary>
+    /// Generates an HTML table for transactions
+    /// </summary>
+    /// <param name="transactions">List of transactions</param>
+    /// <returns>HTML</returns>
+    private string GetTable(List<Transaction> transactions)
     {
         string table = "<table><tr><td>Hash</td><td>Time</td><td>Type</td><td>Value</td><td>Balance</td><td>tx_index</td><td>epoch time</td><td>fee</td></tr>";
 
-        foreach (OutExt trx in transactions)
+        foreach (Transaction trx in transactions)
         {
             table += string.Format("<tr><td><a href='{0}tx/{1}'>hash</a></td><td>{2}</td><td>{3}</td><td>{4}</td><td>{5}</td><td>{6}</td><td>{7}</td><td>{8}</td></tr>",
                 blockchainURL, trx.hash, trx.timeOfTrx, trx.transactionType, ConvertToBTC(trx.value), ConvertToBTC(trx.balance), trx.tx_index, trx.timeEpoch, ConvertToBTC(trx.fee));
@@ -525,7 +584,14 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
         return table;
     }
 
-    private string GetChartInitJS(string dataId, string elementId)
+
+    /// <summary>
+    /// Generates the JavaScript for a line chart 
+    /// </summary>
+    /// <param name="data">String formatted according the morris documentation</param>
+    /// <param name="elementId">The ID of the DIV where the chart should be displayed</param>
+    /// <returns></returns>
+    private string GetChartInitJS(string data, string elementId)
     {
         return @"
         new Morris.Line({
@@ -534,7 +600,7 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
             // Chart data records -- each entry in this array corresponds to a point on
             // the chart.
             data: [
-                    " + dataId + @"
+                    " + data + @"
             ],
             // The name of the data record attribute that contains x-values.
             xkey: 'date',
@@ -553,12 +619,25 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
 
     }
 
+
+    /// <summary>
+    /// Converts the value of the transaction to BTC
+    /// </summary>
+    /// <param name="value">Value</param>
+    /// <returns>Value in BTC</returns>
     private double ConvertToBTC(long value)
     {
         return (double)value / 1000000000;
     }
 
 
+    /// <summary>
+    /// Method for converting epoch time to date and time and extracting the time from the serialized JSON data if necessary.
+    /// </summary>
+    /// <param name="epochTime">The epoch time value</param>
+    /// <param name="JSON">The serialized JSON data</param>
+    /// <param name="tx_index">The index of the transaction</param>
+    /// <returns>Date and time of the transaction</returns>
     private long GetEpochTimeFromJSON(int epochTime, string JSON, long tx_index)
     {
         // get the correct time from the rawData, wasn't decoded correctly from JSON de-serializer
@@ -593,14 +672,22 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
         return epochTime;
     }
 
+
+    /// <summary>
+    /// Registers the JavaScript
+    /// </summary>
+    /// <param name="javascript">JavaScript to register</param>
     private void RegisterStartupScript(string javascript)
     {
         Page.ClientScript.RegisterStartupScript(typeof(String), "page", javascript, true);
     }
 
 
-
-
+    /// <summary>
+    /// Deserializing the JSON object
+    /// </summary>
+    /// <param name="result"></param>
+    /// <returns></returns>
     private BlockChainAddress GetAddrfromJSON(string result)
     {
 
@@ -612,9 +699,13 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
     }
 
 
+    /// <summary>
+    /// Retrieval of JSON response from BlockChain
+    /// </summary>
+    /// <param name="url"></param>
+    /// <returns></returns>
     private string GetBlockchainResult(string url)
     {
-
 
         HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
 
