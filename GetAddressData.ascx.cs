@@ -74,33 +74,37 @@ public class Transaction
         this.dataRow = dataRow;
 
 
-        this.timeOfTrx = DateTime.Parse(dataRow["TrxTime"].ToString());
-        this.hash = dataRow["TrxHash"].ToString();
-        this.transactionType = dataRow["TrxType"].ToString() == "IN" ? TransactionType.IN : TransactionType.OUT;
-        this.value = System.Convert.ToInt64(dataRow["TrxValue"]);
-        this.balance = System.Convert.ToInt64(dataRow["TrxAfterBalance"]);
-        this.tx_index = System.Convert.ToInt64(dataRow["TxIndex"]);
-        this.timeEpoch = System.Convert.ToInt64(dataRow["TrxEpochTime"]);
-        this.fee = System.Convert.ToInt64(dataRow["TrxFee"]);
-        this.address = dataRow["TrxAddress"].ToString();
-        this.fee = dataRow["TrxBlockHeight"] == System.DBNull.Value ? 0 : System.Convert.ToInt64(dataRow["TrxBlockHeight"]);
-        this.itemCreatedBy = System.Convert.ToInt32(dataRow["ItemCreatedBy"]);
-        this.itemCreatedWhen = DateTime.Parse(dataRow["ItemCreatedWhen"].ToString());
+        this.Time = DateTime.Parse(dataRow["TrxTime"].ToString());
+        this.Hash = dataRow["TrxHash"].ToString();
+        this.TransactionType = dataRow["TrxType"].ToString() == "IN" ? TransactionType.IN : TransactionType.OUT;
+        this.Value = System.Convert.ToInt64(dataRow["TrxValue"]);
+        this.Balance = System.Convert.ToInt64(dataRow["TrxAfterBalance"]);
+        this.Index = System.Convert.ToInt64(dataRow["TxIndex"]);
+        this.TimeEpoch = System.Convert.ToInt64(dataRow["TrxEpochTime"]);
+        this.Fee = System.Convert.ToInt64(dataRow["TrxFee"]);
+        this.Address = dataRow["TrxAddress"].ToString();
+        this.Fee = dataRow["TrxBlockHeight"] == System.DBNull.Value ? 0 : System.Convert.ToInt64(dataRow["TrxBlockHeight"]);
+        this.ItemCreatedBy = System.Convert.ToInt32(dataRow["ItemCreatedBy"]);
+        this.ItemCreatedWhen = DateTime.Parse(dataRow["ItemCreatedWhen"].ToString());
+        this.ItemOrder = System.Convert.ToInt32(dataRow["TrxOrder"]);
 
     }
 
-    public DateTime timeOfTrx { get; set; }
-    public TransactionType transactionType { get; set; }
-    public long balance { get; set; }
-    public long value { get; set; }
-    public string hash { get; set; }
-    public long tx_index { get; set; }
-    public long timeEpoch { get; set; }
-    public long fee { get; set; }
-    public string address { get; set; }
-    public int itemCreatedBy { get; set; }
-    public DateTime itemCreatedWhen { get; set; }
-    public string blockHeight { get; set; }
+    public DateTime Time { get; set; }
+    public TransactionType TransactionType { get; set; }
+    public long Balance { get; set; }
+    public long Value { get; set; }
+    public string Hash { get; set; }
+    // tx_index value
+    public long Index { get; set; }
+    public long TimeEpoch { get; set; }
+    public long Fee { get; set; }
+    public string Address { get; set; }
+    public int ItemCreatedBy { get; set; }
+    public DateTime ItemCreatedWhen { get; set; }
+    public string BlockHeight { get; set; }
+    // original order as reported by BlockChain
+    public int ItemOrder { get; set; }
 
 }
 
@@ -144,7 +148,7 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
         else
         {
 
-
+            lblInfo.Text = "";
         }
     }
 
@@ -176,47 +180,54 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
 
             // Check if database entries for the given address are available and return last transaction if yes
             Transaction lastTrx = GetLastTransaction(startAddress);
+                        
+            // all transactions for the given address
+            List<Transaction> trxAll = new List<Transaction>();
 
-            // no transaction found, retrieve all
-            if (lastTrx == null)
+            string url = blockchainURL + "address/" + startAddress + suffixQueryString;
+
+            int n_offset = 0;
+
+            // Loop until all transactions are retrieved
+            while (true)
             {
+                string offset = "";
 
-                List<Transaction> trxAll = new List<Transaction>();
-
-                string url = blockchainURL + "address/" + startAddress + suffixQueryString;
-
-                int n_offset = 0;
-
-                // Loop until all transactions are retrieved
-                while (true)
+                // append offset if necessary
+                if (n_offset > 0)
                 {
-                    string offset = "";
-
-                    // append offset if necessary
-                    if (n_offset > 0)
-                    {
-                        offset = "&offset=" + n_offset * 50;
-                    }
-
-                    string rawJSON = GetBlockchainResult(url + offset);
-
-                    // create object from JSON
-                    BlockChainAddress address = GetAddrfromJSON(rawJSON);
-
-                    // get all transactions for the current address
-                    List<Transaction> trxOrdered = GetTransactionsList(address, rawJSON);
-
-                    trxOrdered.AddRange(trxAll);
-                    trxAll = trxOrdered;
-
-                    // Break if the total of received transaction is the same (or higher if a new transaction was issued in the mean time) as the transaction count (n_tx)
-                    if (trxAll.Count >= address.n_tx)
-                    {
-                        break;
-                    }
-
-                    n_offset++;
+                    offset = "&offset=" + n_offset * 50;
                 }
+
+                // Performing remote JSON call
+                string rawJSON = GetBlockchainResult(url + offset);
+
+                // create object from JSON (deserialization)
+                BlockChainAddress address = GetAddrfromJSON(rawJSON);
+
+                bool foundLastTransaction = false;
+
+                // get all missing transactions for the current address
+                List<Transaction> trxNonOrdered = GetTransactionsList(address, rawJSON, lastTrx, trxAll.Count + (lastTrx == null ? 0 : lastTrx.ItemOrder), out foundLastTransaction);
+                               
+                // TODO: check if order could be reversed, move the ordering outside of the while loop and swap order values 
+
+                 List<Transaction> trxOrdered = trxNonOrdered.OrderBy(o => o.Time).ToList();
+
+                trxOrdered.AddRange(trxAll);
+                trxAll = trxOrdered;
+
+                // Break if the total of received transaction is the same (or higher if a new transaction was issued in the mean time) as the transaction count (n_tx)
+                if (trxAll.Count >= address.n_tx || foundLastTransaction) // break if found last transaction in response
+                {
+                    break;
+                }
+
+                n_offset++;
+            }
+
+            if (trxAll.Count > 0)
+            {
 
                 trxAll = FixOrder(trxAll);
 
@@ -235,6 +246,11 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
                 // save results into DB
                 SaveToDB(trxAll, startAddress);
             }
+            else
+            {
+                lblInfo.Text = "Nothing retrieved.";
+            }
+
         }
     }
 
@@ -246,7 +262,7 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
     /// <returns></returns>
     private Transaction GetLastTransaction(string address)
     {
-        DataSet ds = ConnectionHelper.ExecuteQuery(string.Format("SELECT TOP 1 * FROM BTC_Transactions WHERE TrxAddress = '{0}' ORDER BY ItemID DESC", address), null, QueryTypeEnum.SQLQuery, true);
+        DataSet ds = ConnectionHelper.ExecuteQuery(string.Format("SELECT TOP 1 * FROM BTC_Transactions WHERE TrxAddress = '{0}' ORDER BY TrxOrder DESC", address), null, QueryTypeEnum.SQLQuery, true);
 
         if (ds.Tables[0].Rows.Count > 0)
         {
@@ -274,9 +290,10 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
       ,[TrxAfterBalance]
       ,[TxIndex]
       ,[TrxEpochTime]
+      ,[TrxOrder]
       ,[TrxFee]
       ,[TrxAddress]
-      ,[TrxBlockHeight]
+      ,[TrxBlockHeight]      
        ) VALUES ");
 
         string currentUserId = CMS.CMSHelper.CMSContext.CurrentUser.UserID.ToString();
@@ -285,8 +302,10 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
         int index = 0;
 
         // create SQL statement
-        foreach (Transaction trx in trxAll)
+        for (int i = trxAll.Count - 1; i >= 0 ; i-- )
         {
+            Transaction trx = trxAll[i];
+
             query.Append("(");
 
             query.Append(currentUserId);
@@ -297,37 +316,40 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
             query.Append("',");
 
             query.Append("'");
-            query.Append(trx.hash);
+            query.Append(trx.Hash);
             query.Append("',");
 
             query.Append("'");
-            query.Append(trx.timeOfTrx);
+            query.Append(trx.Time);
             query.Append("',");
 
             query.Append("'");
-            query.Append(trx.transactionType);
+            query.Append(trx.TransactionType);
             query.Append("',");
 
-            query.Append(trx.value);
+            query.Append(trx.Value);
             query.Append(",");
 
-            query.Append(trx.balance);
+            query.Append(trx.Balance);
             query.Append(",");
 
-            query.Append(trx.tx_index);
+            query.Append(trx.Index);
             query.Append(",");
 
-            query.Append(trx.timeEpoch);
+            query.Append(trx.TimeEpoch);
+            query.Append(",");
+            
+            query.Append(trx.ItemOrder);
             query.Append(",");
 
-            query.Append(trx.fee);
+            query.Append(trx.Fee);
             query.Append(",");
 
             query.Append("'");
             query.Append(address);
             query.Append("',");
 
-            query.Append(trx.blockHeight == null ? "NULL" : trx.blockHeight);
+            query.Append(trx.BlockHeight == null ? "NULL" : trx.BlockHeight);
 
             query.Append(")");
 
@@ -354,10 +376,10 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
         for (int i = 0; i < trxAll.Count; i++)
         {
             // If epoch times are same, check, if they are in the correct order (IN transaction before the out transaction)
-            if (i > 0 && trxAll[i].timeEpoch == trxAll[i - 1].timeEpoch)
+            if (i > 0 && trxAll[i].TimeEpoch == trxAll[i - 1].TimeEpoch)
             {
                 // if the first transaction is an OUT transaction, swap them
-                if (trxAll[i - 1].transactionType == TransactionType.OUT)
+                if (trxAll[i - 1].TransactionType == TransactionType.OUT)
                 {
                     Swap(trxAll, i, i - 1);
                 }
@@ -389,20 +411,20 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
     private List<Transaction> CalculateBalance(List<Transaction> trxOrdered)
     {
 
-        trxOrdered[0].balance += trxOrdered[0].value;
+        trxOrdered[0].Balance += trxOrdered[0].Value;
 
         for (int i = 1; i < trxOrdered.Count; i++)
         {
             // if transaction type is IN direction, add, otherwise subtract
-            trxOrdered[i].balance = trxOrdered[i - 1].balance;
+            trxOrdered[i].Balance = trxOrdered[i - 1].Balance;
 
-            if (trxOrdered[i].transactionType == TransactionType.IN)
+            if (trxOrdered[i].TransactionType == TransactionType.IN)
             {
-                trxOrdered[i].balance += trxOrdered[i].value;
+                trxOrdered[i].Balance += trxOrdered[i].Value;
             }
             else
             {
-                trxOrdered[i].balance -= trxOrdered[i].value;
+                trxOrdered[i].Balance -= trxOrdered[i].Value;
             }
         }
 
@@ -415,16 +437,24 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
     /// </summary>
     /// <param name="address">The address of the report</param>
     /// <param name="rawData">Serialized JSON data for invalidly serialized data</param>    
-    private List<Transaction> GetTransactionsList(BlockChainAddress address, string rawData)
+    private List<Transaction> GetTransactionsList(BlockChainAddress address, string rawData, Transaction lastTrx, int order, out bool lastTrxFound)
     {
         // List of transaction, will be ordered and use as a data source for charts
-
         List<Transaction> trx = new List<Transaction>();
+
+        // value for balance calculation
         long balance = address.final_balance;
+        lastTrxFound = false;
 
         // Get all relevant transactions
         foreach (Tx transaction in address.txs)
         {
+            if (lastTrx != null && transaction.tx_index == lastTrx.Index)
+            {
+                lastTrxFound = true;
+                break;
+            }
+
             long tempValOut = 0;
             long tempValIn = 0;
             long fee = 0;
@@ -447,7 +477,7 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
 
             if (tempValOut != 0)
             {
-                newItemOut = InitializeTrx(transaction, TransactionType.OUT, rawData, tempValOut, balance);
+                newItemOut = InitializeTrx(transaction, TransactionType.OUT, rawData, tempValOut, balance, order);
                 trx.Add(newItemOut);
             }
 
@@ -465,15 +495,22 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
 
             if (tempValIn != 0)
             {
-                newItemIn = InitializeTrx(transaction, TransactionType.IN, rawData, tempValIn, balance);
+                newItemIn = InitializeTrx(transaction, TransactionType.IN, rawData, tempValIn, balance, order);                
                 trx.Add(newItemIn);
             }
 
-            trx[trx.Count - 1].fee = fee;
+            trx[trx.Count - 1].Fee = fee < 0 ?  fee * -1 : fee;
+        }
+
+
+        // initialize the original transaction order (will be reversed later)        
+        for (int i =trx.Count - 1; i >=0 ; i--)
+        {
+            trx[i].ItemOrder += trx[i].ItemOrder + i;
         }
 
         // Order the list based on the timestamp
-        return trx.OrderBy(o => o.timeOfTrx).ToList();
+        return trx;
     }
 
 
@@ -485,22 +522,24 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
     /// <param name="rawData">The JSON raw data (serialized) for extracting missing values</param>
     /// <param name="value">Transaction value/amount</param>
     /// <param name="balance">The balance of the address after the transaction</param>
+    /// <param name="itemOrder">The order/index of the transaction according to BlockChain</param>
     /// <returns>Initialized extended transaction</returns>
-    private Transaction InitializeTrx(Tx transaction, TransactionType transactionType, string rawData, long value, long balance)
+    private Transaction InitializeTrx(Tx transaction, TransactionType transactionType, string rawData, long value, long balance, int itemOrder)
     {
         Transaction trxEntry = new Transaction();
 
-        trxEntry.timeEpoch = GetEpochTimeFromJSON(transaction.time, rawData, transaction.tx_index);
+        trxEntry.TimeEpoch = GetEpochTimeFromJSON(transaction.time, rawData, transaction.tx_index);
 
         // convert epoch time to regular date time
         System.DateTime dtDateTime = new DateTime(1970, 1, 1, 0, 0, 0, 0);
-        trxEntry.timeOfTrx = dtDateTime.AddSeconds(trxEntry.timeEpoch).ToLocalTime();
+        trxEntry.Time = dtDateTime.AddSeconds(trxEntry.TimeEpoch).ToLocalTime();
 
-        trxEntry.transactionType = transactionType;
-        trxEntry.value = value;
-        trxEntry.hash = transaction.hash;
-        trxEntry.tx_index = transaction.tx_index;
-        trxEntry.balance = balance;
+        trxEntry.TransactionType = transactionType;
+        trxEntry.Value = value;
+        trxEntry.Hash = transaction.hash;
+        trxEntry.Index = transaction.tx_index;
+        trxEntry.Balance = balance;
+        trxEntry.ItemOrder = itemOrder;
 
         return trxEntry;
     }
@@ -521,10 +560,10 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
         // Build in and out lists
         foreach (Transaction transaction in transactions)
         {
-            long value = transaction.value;
-            string newLine = getDataLine(transaction.timeOfTrx, value);
+            long value = transaction.Value;
+            string newLine = getDataLine(transaction.Time, value);
 
-            if (transaction.transactionType == TransactionType.IN)
+            if (transaction.TransactionType == TransactionType.IN)
             {
                 dataIn += newLine;
             }
@@ -534,11 +573,11 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
             }
 
             //Generate also differential chart
-            dataDiff += getDataLine(transaction.timeOfTrx, transaction.balance);
+            dataDiff += getDataLine(transaction.Time, transaction.Balance);
             dataDiff += newLine;
 
 
-            dataBallance += getDataLine(transaction.timeOfTrx, transaction.balance);
+            dataBallance += getDataLine(transaction.Time, transaction.Balance);
         }
 
 
@@ -577,7 +616,7 @@ public partial class CMSWebParts_Custom_GetAddressData : CMSAbstractWebPart
         foreach (Transaction trx in transactions)
         {
             table += string.Format("<tr><td><a href='{0}tx/{1}'>hash</a></td><td>{2}</td><td>{3}</td><td>{4}</td><td>{5}</td><td>{6}</td><td>{7}</td><td>{8}</td></tr>",
-                blockchainURL, trx.hash, trx.timeOfTrx, trx.transactionType, ConvertToBTC(trx.value), ConvertToBTC(trx.balance), trx.tx_index, trx.timeEpoch, ConvertToBTC(trx.fee));
+                blockchainURL, trx.Hash, trx.Time, trx.TransactionType, ConvertToBTC(trx.Value), ConvertToBTC(trx.Balance), trx.Index, trx.TimeEpoch, ConvertToBTC(trx.Fee));
         }
 
         table += "</table>";

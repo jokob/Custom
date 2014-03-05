@@ -11,6 +11,7 @@
 <uc1:DateTimePicker runat="server" ID="DateTimePickerStart" />
 <uc1:DateTimePicker runat="server" ID="DateTimePickerEnd" />
 
+<asp:Label ID="lblInfo" runat="server" />
 
 <div style="padding:15px;">
     <asp:literal runat="server" id="table" ></asp:literal>
